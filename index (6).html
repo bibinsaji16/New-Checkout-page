@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Nebula Nexus Checkout</title>
+    <script src="https://apis.google.com/js/api.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            background-color: #f0f0f0;
+        }
+        .card {
+            background-color: white;
+            padding: 2rem;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            width: 100%;
+            max-width: 600px;
+        }
+        h1, h2 {
+            margin-top: 0;
+            color: #333;
+        }
+        input, select {
+            width: 100%;
+            padding: 0.5rem;
+            margin-bottom: 1rem;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+        button {
+            background-color: #0070f3;
+            color: white;
+            border: none;
+            padding: 0.5rem 1rem;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        button:disabled {
+            background-color: #ccc;
+        }
+        .error {
+            color: red;
+            margin-top: 1rem;
+        }
+        .hidden {
+            display: none;
+        }
+        .plan-options {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 1rem;
+        }
+        .plan-option {
+            border: 1px solid #ccc;
+            padding: 1rem;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        .plan-option.selected {
+            border-color: #0070f3;
+            background-color: #e6f0ff;
+        }
+        .add-on {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 0.5rem;
+        }
+        .total {
+            font-size: 1.2rem;
+            font-weight: bold;
+            margin-top: 1rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="card" id="emailEntry">
+        <h1>Nebula Nexus Checkout</h1>
+        <p>Enter your email to proceed to checkout</p>
+        <input type="email" id="email" placeholder="Enter your email" required>
+        <button id="submit" onclick="handleSubmit()">Proceed to Checkout</button>
+        <p id="error" class="error"></p>
+    </div>
+
+    <div class="card hidden" id="checkoutPage">
+        <h1>Checkout</h1>
+        <div id="userInfo"></div>
+        <h2>Select Your Plan</h2>
+        <div class="plan-options" id="planOptions"></div>
+        <h2>Add-Ons</h2>
+        <div id="addOns"></div>
+        <h2>Select Expiry Date</h2>
+        <input type="date" id="expiryDate">
+        <p class="total">Total: $<span id="totalValue">0</span></p>
+        <button onclick="handleCheckout()">Complete Checkout</button>
+    </div>
+
+    <script>
+        // Google Sheets API configuration
+        const API_KEY = 'YOUR_API_KEY';
+        const SHEET_ID = 'YOUR_SHEET_ID';
+        const RANGE = 'A:I';
+
+        let userData = null;
+        let selectedPlan = null;
+        let selectedAddOns = {};
+
+        const plans = [
+            { name: 'Core', playingTime: 150, connectedDevices: 1, price: 1000 },
+            { name: 'Standard', playingTime: 250, connectedDevices: 5, price: 2000 },
+            { name: 'Ultimate', playingTime: 500, connectedDevices: 10, price: 5000 },
+        ];
+
+        const addOns = [
+            { name: 'Gaming Hours', price: 100, description: '50hr x 1', allowMultiple: true },
+            { name: '4k Vision', price: 250, description: '', allowMultiple: false },
+            { name: 'Additional Devices', price: 250, description: 'x 1', allowMultiple: true },
+            { name: 'NCP Purchase', price: 20, description: 'x 1', allowMultiple: true },
+        ];
+
+        function initClient() {
+            gapi.client.init({
+                apiKey: API_KEY,
+                discoveryDocs: ["https://sheets.googleapis.com/$discovery/rest?version=v4"],
+            }).then(function() {
+                // API is initialized and ready to use
+            }, function(error) {
+                document.getElementById('error').textContent = 'Error initializing Google Sheets API';
+            });
+        }
+
+        function handleClientLoad() {
+            gapi.load('client', initClient);
+        }
+
+        async function fetchUserData(email) {
+            try {
+                const response = await gapi.client.sheets.spreadsheets.values.get({
+                    spreadsheetId: SHEET_ID,
+                    range: RANGE,
+                });
+
+                const rows = response.result.values;
+                if (rows && rows.length) {
+                    const userRow = rows.find(row => row[0] === email);
+                    if (userRow) {
+                        return {
+                            email: userRow[0],  // Column A
+                            gamingHours: userRow[2],  // Column C
+                            connectedDevices: userRow[3],  // Column D
+                            currentPlan: userRow[4],  // Column E
+                            expiryDate: userRow[6],  // Column G
+                            addOns: userRow[7],  // Column H
+                            value: userRow[8],  // Column I
+                        };
+                    }
+                }
+                return null;
+            } catch (error) {
+                console.error('Error fetching user data:', error);
+                throw error;
+            }
+        }
+
+        async function updateUserData(data) {
+            try {
+                const response = await gapi.client.sheets.spreadsheets.values.get({
+                    spreadsheetId: SHEET_ID,
+                    range: 'A:A',
+                });
+
+                const rows = response.result.values;
+                const rowIndex = rows.findIndex(row => row[0] === data.email);
+
+                if (rowIndex === -1) {
+                    throw new Error('User not found');
+                }
+
+                await gapi.client.sheets.spreadsheets.values.update({
+                    spreadsheetId: SHEET_ID,
+                    range: `C${rowIndex + 1}:I${rowIndex + 1}`,
+                    valueInputOption: 'USER_ENTERED',
+                    resource: {
+                        values: [[
+                            data.gamingHours,
+                            data.connectedDevices,
+                            data.plan,
+                            '',
+                            data.expiryDate,
+                            JSON.stringify(data.addOns),
+                            data.totalValue
+                        ]],
+                    },
+                });
+
+                return true;
+            } catch (error) {
+                console.error('Error updating user data:', error);
+                throw error;
+            }
+        }
+
+        async function handleSubmit() {
+            const emailInput = document.getElementById('email');
+            const submitButton = document.getElementById('submit');
+            const errorElement = document.getElementById('error');
+
+            const email = emailInput.value.trim();
+            if (!email) {
+                errorElement.textContent = 'Please enter an email address.';
+                return;
+            }
+
+            submitButton.disabled = true;
+            errorElement.textContent = '';
+
+            try {
+                userData = await fetchUserData(email);
+                if (userData) {
+                    document.getElementById('emailEntry').classList.add('hidden');
+                    document.getElementById('checkoutPage').classList.remove('hidden');
+                    displayCheckoutPage();
+                } else {
+                    errorElement.textContent = 'Email not found. Please try again.';
+                }
+            } catch (error) {
+                errorElement.textContent = 'An error occurred. Please try again.';
+            } finally {
+                submitButton.disabled = false;
+            }
+        }
+
+        function displayCheckoutPage() {
+            document.getElementById('userInfo').innerHTML = `
+                <p><strong>Email:</strong> ${userData.email}</p>
+                <p><strong>Current Plan:</strong> ${userData.currentPlan}</p>
+                <p><strong>Current Expiry Date:</strong> ${userData.expiryDate}</p>
+            `;
+
+            const planOptionsElement = document.getElementById('planOptions');
+            planOptionsElement.innerHTML = plans.map(plan => `
+                <div class="plan-option" onclick="selectPlan('${plan.name}')">
+                    <h3>${plan.name}</h3>
+                    <p>$${plan.price} / month</p>
+                    <p>Playing Time: ${plan.playingTime} hrs</p>
+                    <p>Connected Devices: ${plan.connectedDevices}</p>
+                </div>
+            `).join('');
+
+            const addOnsElement = document.getElementById('addOns');
+            addOnsElement.innerHTML = addOns.map(addOn => `
+                <div class="add-on">
+                    <label>
+                        <input type="checkbox" onchange="toggleAddOn('${addOn.name}')">
+                        ${addOn.name} - $${addOn.price} ${addOn.description}
+                    </label>
+                    ${addOn.allowMultiple ? `
+                        <div>
+                            <button onclick="changeAddOnQuantity('${addOn.name}', -1)">-</button>
+                            <span id="${addOn.name}-quantity">0</span>
+                            <button onclick="changeAddOnQuantity('${addOn.name}', 1)">+</button>
+                        </div>
+                    ` : ''}
+                </div>
+            `).join('');
+
+            const today = new Date();
+            const minDate = today.toISOString().split('T')[0];
+            const maxDate = new Date(today.setFullYear(today.getFullYear() + 1)).toISOString().split('T')[0];
+            document.getElementById('expiryDate').setAttribute('min', minDate);
+            document.getElementById('expiryDate').setAttribute('max', maxDate);
+            document.getElementById('expiryDate').addEventListener('change', calculateTotal);
+
+            selectPlan(userData.currentPlan);
+        }
+
+        function selectPlan(planName) {
+            selectedPlan = plans.find(plan => plan.name === planName);
+            document.querySelectorAll('.plan-option').forEach(el => {
+                el.classList.toggle('selected', el.querySelector('h3').textContent === planName);
+            });
+            calculateTotal();
+        }
+
+        function toggleAddOn(addOnName) {
+            if (selectedAddOns[addOnName]) {
+                delete selectedAddOns[addOnName];
+            } else {
+                selectedAddOns[addOnName] = 1;
+            }
+            calculateTotal();
+        }
+
+        function changeAddOnQuantity(addOnName, change) {
+            selectedAddOns[addOnName] = (selectedAddOns[addOnName] || 0) + change;
+            if (selectedAddOns[addOnName] <= 0) {
+                delete selectedAddOns[addOnName];
+            }
+            document.getElementById(`${addOnName}-quantity`).textContent = selectedAddOns[addOnName] || 0;
+            calculateTotal();
+        }
+
+        function calculateTotal() {
+            const expiryDate = new Date(document.getElementById('expiryDate').value);
+            const today = new Date();
+            const monthsDiff = (expiryDate.getFullYear() - today.getFullYear()) * 12 + expiryDate.getMonth() - today.getMonth();
+
+            if (isNaN(monthsDiff) || monthsDiff <= 0) {
+                document.getElementById('totalValue').textContent = '0';
+                return;
+            }
+
+            const planTotal = selectedPlan ? selectedPlan.price * monthsDiff : 0;
+            const addOnTotal = Object.entries(selectedAddOns).reduce((total, [name, quantity]) => {
+                const addOn = addOns.find(a => a.name === name);
+                return total + (addOn ? addOn.price * quantity * monthsDiff : 0);
+            }, 0);
+
+            const total = planTotal + addOnTotal;
+            document.getElementById('totalValue').textContent = total.toFixed(2);
+        }
+
+        async function handleCheckout() {
+            const expiryDate = document.getElementById('expiryDate').value;
+            if (!selectedPlan || !expiryDate) {
+                alert('Please select a plan and expiry date.');
+                return;
+            }
+
+            const checkoutData = {
+                email: userData.email,
+                plan: selectedPlan.name,
+                gamingHours: selectedPlan.playingTime + (selectedAddOns['Gaming Hours'] ? selectedAddOns['Gaming Hours'] * 50 : 0),
+                connectedDevices: selectedPlan.connectedDevices + (selectedAddOns['Additional Devices'] || 0),
+                expiryDate: expiryDate,
+                addOns: selectedAddOns,
+                totalValue: parseFloat(document.getElementById('totalValue').textContent)
+            };
+
+            try {
+                await updateUserData(checkoutData);
+                alert('Checkout successful! Your plan has been updated.');
+                window.location.reload();
+            } catch (error) {
+                alert('An error occurred during checkout. Please try again.');
+            }
+        }
+    </script>
+
+    <script async defer src="https://apis.google.com/js/api.js" onload="handleClientLoad()"></script>
+</body>
+</html>
