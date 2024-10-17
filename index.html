@@ -6,77 +6,149 @@
     <title>Nebula Nexus Checkout</title>
     <script src="https://apis.google.com/js/api.js"></script>
     <style>
+        :root {
+            --primary-color: #107C10;
+            --secondary-color: #54B054;
+            --background-color: #F2F2F2;
+            --text-color: #333;
+            --card-background: #FFFFFF;
+        }
+
         body {
-            font-family: Arial, sans-serif;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
             display: flex;
             justify-content: center;
             align-items: center;
             min-height: 100vh;
             margin: 0;
-            background-color: #f0f0f0;
+            background-color: var(--background-color);
+            color: var(--text-color);
         }
+
         .card {
-            background-color: white;
+            background-color: var(--card-background);
             padding: 2rem;
             border-radius: 8px;
             box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
             width: 100%;
             max-width: 600px;
         }
+
         h1, h2 {
             margin-top: 0;
-            color: #333;
+            color: var(--primary-color);
         }
+
         input, select {
             width: 100%;
-            padding: 0.5rem;
+            padding: 0.75rem;
             margin-bottom: 1rem;
             border: 1px solid #ccc;
             border-radius: 4px;
+            font-size: 1rem;
         }
+
         button {
-            background-color: #0070f3;
+            background-color: var(--primary-color);
             color: white;
             border: none;
-            padding: 0.5rem 1rem;
+            padding: 0.75rem 1.5rem;
             border-radius: 4px;
             cursor: pointer;
+            font-size: 1rem;
+            transition: background-color 0.3s ease;
         }
+
+        button:hover {
+            background-color: var(--secondary-color);
+        }
+
         button:disabled {
             background-color: #ccc;
         }
+
         .error {
-            color: red;
+            color: #e81123;
             margin-top: 1rem;
         }
+
         .hidden {
             display: none;
         }
+
         .plan-options {
-            display: flex;
-            justify-content: space-between;
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 1rem;
             margin-bottom: 1rem;
         }
+
         .plan-option {
-            border: 1px solid #ccc;
+            border: 2px solid #ccc;
             padding: 1rem;
             border-radius: 4px;
             cursor: pointer;
+            transition: all 0.3s ease;
         }
+
+        .plan-option:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
+        }
+
         .plan-option.selected {
-            border-color: #0070f3;
-            background-color: #e6f0ff;
+            border-color: var(--primary-color);
+            background-color: rgba(16, 124, 16, 0.1);
         }
+
         .add-on {
             display: flex;
             justify-content: space-between;
             align-items: center;
             margin-bottom: 0.5rem;
+            padding: 0.5rem;
+            border: 1px solid #ccc;
+            border-radius: 4px;
         }
+
         .total {
-            font-size: 1.2rem;
+            font-size: 1.5rem;
             font-weight: bold;
             margin-top: 1rem;
+            color: var(--primary-color);
+        }
+
+        .quantity-control {
+            display: flex;
+            align-items: center;
+        }
+
+        .quantity-control button {
+            width: 30px;
+            height: 30px;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .quantity-control span {
+            margin: 0 0.5rem;
+        }
+
+        #thankYouPage {
+            text-align: center;
+        }
+
+        #thankYouPage h1 {
+            color: var(--primary-color);
+            font-size: 2.5rem;
+            margin-bottom: 1rem;
+        }
+
+        #thankYouPage p {
+            font-size: 1.2rem;
+            margin-bottom: 2rem;
         }
     </style>
 </head>
@@ -100,6 +172,14 @@
         <input type="date" id="expiryDate">
         <p class="total">Total: $<span id="totalValue">0</span></p>
         <button onclick="handleCheckout()">Complete Checkout</button>
+    </div>
+
+    <div class="card hidden" id="thankYouPage">
+        <h1>Thank You!</h1>
+        <p>Your order has been successfully processed.</p>
+        <p>Order details:</p>
+        <div id="orderSummary"></div>
+        <button onclick="window.location.reload()">Return to Home</button>
     </div>
 
     <script>
@@ -262,7 +342,7 @@
                         ${addOn.name} - $${addOn.price} ${addOn.description}
                     </label>
                     ${addOn.allowMultiple ? `
-                        <div>
+                        <div class="quantity-control">
                             <button onclick="changeAddOnQuantity('${addOn.name}', -1)">-</button>
                             <span id="${addOn.name}-quantity">0</span>
                             <button onclick="changeAddOnQuantity('${addOn.name}', 1)">+</button>
@@ -320,7 +400,7 @@
             const planTotal = selectedPlan ? selectedPlan.price * monthsDiff : 0;
             const addOnTotal = Object.entries(selectedAddOns).reduce((total, [name, quantity]) => {
                 const addOn = addOns.find(a => a.name === name);
-                return total + (addOn ? addOn.price * quantity * monthsDiff : 0);
+                return total +   (addOn ? addOn.price * quantity * monthsDiff : 0);
             }, 0);
 
             const total = planTotal + addOnTotal;
@@ -346,11 +426,24 @@
 
             try {
                 await updateUserData(checkoutData);
-                alert('Checkout successful! Your plan has been updated.');
-                window.location.reload();
+                document.getElementById('checkoutPage').classList.add('hidden');
+                document.getElementById('thankYouPage').classList.remove('hidden');
+                displayThankYouPage(checkoutData);
             } catch (error) {
                 alert('An error occurred during checkout. Please try again.');
             }
+        }
+
+        function displayThankYouPage(orderData) {
+            const orderSummary = document.getElementById('orderSummary');
+            orderSummary.innerHTML = `
+                <p><strong>Plan:</strong> ${orderData.plan}</p>
+                <p><strong>Gaming Hours:</strong> ${orderData.gamingHours}</p>
+                <p><strong>Connected Devices:</strong> ${orderData.connectedDevices}</p>
+                <p><strong>Expiry Date:</strong> ${orderData.expiryDate}</p>
+                <p><strong>Add-Ons:</strong> ${Object.keys(orderData.addOns).join(', ') || 'None'}</p>
+                <p><strong>Total Value:</strong> $${orderData.totalValue}</p>
+            `;
         }
     </script>
 
