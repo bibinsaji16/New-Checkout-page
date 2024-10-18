@@ -186,15 +186,12 @@
         // Client ID and API key from the Developer Console
         const CLIENT_ID = '114789546787-oue24t0frjinu2po7bqoujhecdv0d0ei.apps.googleusercontent.com';
         const API_KEY = 'AIzaSyD85w1ViEGjDduPug-Q_ls0hGX5jx_9g3M';
-
-        // Array of API discovery doc URLs for APIs
+        const SHEET_ID = '1bBTyAlZM47BESezOnPSbk3UcvK2SawuuTZewrTzAOZw';
+        const RANGE = 'A:I';
         const DISCOVERY_DOCS = ["https://sheets.googleapis.com/$discovery/rest?version=v4"];
 
         // Authorization scopes required by the API
         const SCOPES = "https://www.googleapis.com/auth/spreadsheets";
-
-        const SHEET_ID = '1bBTyAlZM47BESezOnPSbk3UcvK2SawuuTZewrTzAOZw';
-        const RANGE = 'A:I';
 
 
         let userData = null;
@@ -223,13 +220,15 @@
             try {
                 await gapi.client.init({
                     apiKey: API_KEY,
-                    discoveryDocs: [DISCOVERY_DOCS],
+                    clientId: CLIENT_ID,
+                    discoveryDocs: DISCOVERY_DOCS,
+                    scope: SCOPES
                 });
                 console.log('GAPI client initialized');
                 document.getElementById('submitEmail').disabled = false;
             } catch (error) {
                 console.error('Error initializing GAPI client', error);
-                document.getElementById('error').textContent = 'Error initializing Google Sheets API. Please try again later.';
+                document.getElementById('error').textContent = 'Error initializing Google Sheets API: ' + error.message;
             }
         }
 
@@ -390,19 +389,57 @@
                 gamingHours: selectedPlan.playingTime + (selectedAddOns['Gaming Hours'] ? selectedAddOns['Gaming Hours'] * 50 : 0),
                 connectedDevices: selectedPlan.connectedDevices + (selectedAddOns['Additional Devices'] || 0),
                 expiryDate: expiryDate,
-                addOns: selectedAddOns,
+                addOns: JSON.stringify(selectedAddOns),
                 totalValue: parseFloat(document.getElementById('totalValue').textContent)
             };
 
             try {
                 console.log('Checkout data:', checkoutData);
-                //  No update needed here as there is no longer any backend update
+                await updateUserData(checkoutData);
                 document.getElementById('checkoutPage').classList.add('hidden');
                 document.getElementById('thankYouPage').classList.remove('hidden');
                 displayThankYouPage(checkoutData);
             } catch (error) {
                 console.error('Checkout error:', error);
                 alert('An error occurred during checkout. Please check the console for more details and try again.');
+            }
+        }
+
+        async function updateUserData(data) {
+            try {
+                const response = await gapi.client.sheets.spreadsheets.values.get({
+                    spreadsheetId: SHEET_ID,
+                    range: 'A:A',
+                });
+
+                const rows = response.result.values;
+                const rowIndex = rows.findIndex(row => row[0] === data.email);
+
+                if (rowIndex === -1) {
+                    throw new Error('User not found');
+                }
+
+                await gapi.client.sheets.spreadsheets.values.update({
+                    spreadsheetId: SHEET_ID,
+                    range: `C${rowIndex + 1}:I${rowIndex + 1}`,
+                    valueInputOption: 'USER_ENTERED',
+                    resource: {
+                        values: [[
+                            data.gamingHours,
+                            data.connectedDevices,
+                            data.plan,
+                            '',  // Column F is empty
+                            data.expiryDate,
+                            data.addOns,
+                            data.totalValue
+                        ]],
+                    },
+                });
+
+                console.log('User data updated successfully');
+            } catch (error) {
+                console.error('Error updating user data:', error);
+                throw error;
             }
         }
 
@@ -413,7 +450,7 @@
                 <p><strong>Gaming Hours:</strong> ${orderData.gamingHours}</p>
                 <p><strong>Connected Devices:</strong> ${orderData.connectedDevices}</p>
                 <p><strong>Expiry Date:</strong> ${orderData.expiryDate}</p>
-                <p><strong>Add-Ons:</strong> ${Object.keys(orderData.addOns).join(', ') || 'None'}</p>
+                <p><strong>Add-Ons:</strong> ${Object.keys(JSON.parse(orderData.addOns)).join(', ') || 'None'}</p>
                 <p><strong>Total Value:</strong> $${orderData.totalValue}</p>
             `;
         }
