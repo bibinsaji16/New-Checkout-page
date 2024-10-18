@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Nebula Nexus Checkout</title>
     <script src="https://apis.google.com/js/api.js"></script>
+    <script src="https://accounts.google.com/gsi/client"></script>
     <style>
         :root {
             --primary-color: #107C10;
@@ -153,12 +154,12 @@
     </style>
 </head>
 <body>
-    <div class="card" id="emailEntry">
+    <div class="card" id="authPage">
         <h1>Nebula Nexus Checkout</h1>
-        <p>Enter your email to proceed to checkout</p>
-        <input type="email" id="email" placeholder="Enter your email" required>
-        <button id="submit" onclick="handleSubmit()">Proceed to Checkout</button>
-        <p id="error" class="error"></p>
+        <p>Please authenticate to proceed:</p>
+        <input type="email" id="loginEmail" placeholder="Enter your email" required>
+        <button id="authorizeButton" onclick="handleAuthClick()">Authorize</button>
+        <button id="signoutButton" onclick="handleSignoutClick()">Sign Out</button>
     </div>
 
     <div class="card hidden" id="checkoutPage">
@@ -183,10 +184,23 @@
     </div>
 
     <script>
-        // Google Sheets API configuration
+        // Client ID and API key from the Developer Console
+        const CLIENT_ID = '114789546787-oue24t0frjinu2po7bqoujhecdv0d0ei.apps.googleusercontent.com
+';
         const API_KEY = 'AIzaSyD85w1ViEGjDduPug-Q_ls0hGX5jx_9g3M';
+
+        // Array of API discovery doc URLs for APIs
+        const DISCOVERY_DOCS = ["https://sheets.googleapis.com/$discovery/rest?version=v4"];
+
+        // Authorization scopes required by the API
+        const SCOPES = "https://www.googleapis.com/auth/spreadsheets";
+
         const SHEET_ID = '1bBTyAlZM47BESezOnPSbk3UcvK2SawuuTZewrTzAOZw';
         const RANGE = 'A:I';
+
+        let tokenClient;
+        let gapiInited = false;
+        let gisInited = false;
 
         let userData = null;
         let selectedPlan = null;
@@ -205,52 +219,111 @@
             { name: 'NCP Purchase', price: 20, description: 'x 1', allowMultiple: true },
         ];
 
-        function initClient() {
-            gapi.client.init({
+        document.getElementById('authorizeButton').style.visibility = 'hidden';
+        document.getElementById('signoutButton').style.visibility = 'hidden';
+
+        function gapiLoaded() {
+            gapi.load('client', initializeGapiClient);
+        }
+
+        async function initializeGapiClient() {
+            await gapi.client.init({
                 apiKey: API_KEY,
-                discoveryDocs: ["https://sheets.googleapis.com/$discovery/rest?version=v4"],
-            }).then(function() {
-                // API is initialized and ready to use
-            }, function(error) {
-                document.getElementById('error').textContent = 'Error initializing Google Sheets API';
+                discoveryDocs: DISCOVERY_DOCS,
             });
+            gapiInited = true;
+            maybeEnableButtons();
         }
 
-        function handleClientLoad() {
-            gapi.load('client', initClient);
+        function gisLoaded() {
+            tokenClient = google.accounts.oauth2.initTokenClient({
+                client_id: CLIENT_ID,
+                scope: SCOPES,
+                callback: '', // defined later
+            });
+            gisInited = true;
+            maybeEnableButtons();
         }
 
-        async function fetchUserData(email) {
-            try {
-                const response = await gapi.client.sheets.spreadsheets.values.get({
-                    spreadsheetId: SHEET_ID,
-                    range: RANGE,
-                });
-
-                const rows = response.result.values;
-                if (rows && rows.length) {
-                    const userRow = rows.find(row => row[0] === email);
-                    if (userRow) {
-                        return {
-                            email: userRow[0],  // Column A
-                            gamingHours: userRow[2],  // Column C
-                            connectedDevices: userRow[3],  // Column D
-                            currentPlan: userRow[4],  // Column E
-                            expiryDate: userRow[6],  // Column G
-                            addOns: userRow[7],  // Column H
-                            value: userRow[8],  // Column I
-                        };
-                    }
-                }
-                return null;
-            } catch (error) {
-                console.error('Error fetching user data:', error);
-                throw error;
+        function maybeEnableButtons() {
+            if (gapiInited && gisInited) {
+                document.getElementById('authorizeButton').style.visibility = 'visible';
             }
         }
 
+        function handleAuthClick() {
+            const email = document.getElementById('loginEmail').value.trim();
+            if (!email) {
+                alert('Please enter your email address.');
+                return;
+            }
+            tokenClient.callback = async (resp) => {
+                if (resp.error !== undefined) {
+                    throw (resp);
+                }
+                document.getElementById('signoutButton').style.visibility = 'visible';
+                document.getElementById('authorizeButton').innerText = 'Refresh';
+                await listMajors(email);
+            };
+
+            if (gapi.client.getToken() === null) {
+                tokenClient.requestAccessToken({prompt: 'consent'});
+            } else {
+                tokenClient.requestAccessToken({prompt: ''});
+            }
+        }
+
+        function handleSignoutClick() {
+            const token = gapi.client.getToken();
+            if (token !== null) {
+                google.accounts.oauth2.revoke(token.access_token);
+                gapi.client.setToken('');
+                document.getElementById('content').innerText = '';
+                document.getElementById('authorizeButton').innerText = 'Authorize';
+                document.getElementById('signoutButton').style.visibility = 'hidden';
+            }
+        }
+
+        async function listMajors(email) {
+            let response;
+            try {
+                response = await gapi.client.sheets.spreadsheets.values.get({
+                    spreadsheetId: SHEET_ID,
+                    range: RANGE,
+                });
+            } catch (err) {
+                document.getElementById('content').innerText = err.message;
+                return;
+            }
+            const range = response.result;
+            if (!range || !range.values || range.values.length == 0) {
+                document.getElementById('content').innerText = 'No values found.';
+                return;
+            }
+            // Check if the email exists in the sheet
+            const userRow = range.values.find(row => row[0] === email);
+            if (userRow) {
+                userData = {
+                    email: userRow[0],
+                    gamingHours: userRow[2],
+                    connectedDevices: userRow[3],
+                    currentPlan: userRow[4],
+                    expiryDate: userRow[6],
+                    addOns: userRow[7],
+                    value: userRow[8],
+                };
+                document.getElementById('authPage').classList.add('hidden');
+                document.getElementById('checkoutPage').classList.remove('hidden');
+                displayCheckoutPage();
+            } else {
+                alert('Email not found. Please try again.');
+            }
+        }
+
+
         async function updateUserData(data) {
             try {
+                console.log('Attempting to update user data:', data);
                 const response = await gapi.client.sheets.spreadsheets.values.get({
                     spreadsheetId: SHEET_ID,
                     range: 'A:A',
@@ -263,7 +336,8 @@
                     throw new Error('User not found');
                 }
 
-                await gapi.client.sheets.spreadsheets.values.update({
+                console.log('Updating row:', rowIndex + 1);
+                const updateResponse = await gapi.client.sheets.spreadsheets.values.update({
                     spreadsheetId: SHEET_ID,
                     range: `C${rowIndex + 1}:I${rowIndex + 1}`,
                     valueInputOption: 'USER_ENTERED',
@@ -279,41 +353,12 @@
                         ]],
                     },
                 });
-
+                console.log('Update response:', updateResponse);
                 return true;
             } catch (error) {
                 console.error('Error updating user data:', error);
+                console.error('Error details:', error.result ? error.result.error : 'No detailed error information');
                 throw error;
-            }
-        }
-
-        async function handleSubmit() {
-            const emailInput = document.getElementById('email');
-            const submitButton = document.getElementById('submit');
-            const errorElement = document.getElementById('error');
-
-            const email = emailInput.value.trim();
-            if (!email) {
-                errorElement.textContent = 'Please enter an email address.';
-                return;
-            }
-
-            submitButton.disabled = true;
-            errorElement.textContent = '';
-
-            try {
-                userData = await fetchUserData(email);
-                if (userData) {
-                    document.getElementById('emailEntry').classList.add('hidden');
-                    document.getElementById('checkoutPage').classList.remove('hidden');
-                    displayCheckoutPage();
-                } else {
-                    errorElement.textContent = 'Email not found. Please try again.';
-                }
-            } catch (error) {
-                errorElement.textContent = 'An error occurred. Please try again.';
-            } finally {
-                submitButton.disabled = false;
             }
         }
 
@@ -330,7 +375,7 @@
                     <h3>${plan.name}</h3>
                     <p>$${plan.price} / month</p>
                     <p>Playing Time: ${plan.playingTime} hrs</p>
-                    <p>Connected Devices: ${plan.connectedDevices}</p>
+                    <p>Connected Devices:  ${plan.connectedDevices}</p>
                 </div>
             `).join('');
 
@@ -400,7 +445,7 @@
             const planTotal = selectedPlan ? selectedPlan.price * monthsDiff : 0;
             const addOnTotal = Object.entries(selectedAddOns).reduce((total, [name, quantity]) => {
                 const addOn = addOns.find(a => a.name === name);
-                return total +   (addOn ? addOn.price * quantity * monthsDiff : 0);
+                return total + (addOn ? addOn.price * quantity * monthsDiff : 0);
             }, 0);
 
             const total = planTotal + addOnTotal;
@@ -425,12 +470,14 @@
             };
 
             try {
+                console.log('Checkout data:', checkoutData);
                 await updateUserData(checkoutData);
                 document.getElementById('checkoutPage').classList.add('hidden');
                 document.getElementById('thankYouPage').classList.remove('hidden');
                 displayThankYouPage(checkoutData);
             } catch (error) {
-                alert('An error occurred during checkout. Please try again.');
+                console.error('Checkout error:', error);
+                alert('An error occurred during checkout. Please check the console for more details and try again.');
             }
         }
 
@@ -446,7 +493,7 @@
             `;
         }
     </script>
-
-    <script async defer src="https://apis.google.com/js/api.js" onload="handleClientLoad()"></script>
+    <script async defer src="https://apis.google.com/js/api.js" onload="gapiLoaded()"></script>
+    <script async defer src="https://accounts.google.com/gsi/client" onload="gisLoaded()"></script>
 </body>
 </html>
