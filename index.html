@@ -157,7 +157,7 @@
         <h1>Nebula Nexus Checkout</h1>
         <p>Please enter your email to proceed:</p>
         <input type="email" id="loginEmail" placeholder="Enter your email" required>
-        <button id="submitEmail" onclick="handleEmailSubmit()">Proceed to Checkout</button>
+        <button id="submitEmail" onclick="handleEmailSubmit()" disabled>Proceed to Checkout</button>
         <p id="error" class="error"></p>
     </div>
 
@@ -216,13 +216,21 @@
 
 
         function gapiLoaded() {
-            gapi.load('client', async () => {
+            gapi.load('client', initializeGapiClient);
+        }
+
+        async function initializeGapiClient() {
+            try {
                 await gapi.client.init({
                     apiKey: API_KEY,
                     discoveryDocs: [DISCOVERY_DOCS],
                 });
                 console.log('GAPI client initialized');
-            });
+                document.getElementById('submitEmail').disabled = false;
+            } catch (error) {
+                console.error('Error initializing GAPI client', error);
+                document.getElementById('error').textContent = 'Error initializing Google Sheets API. Please try again later.';
+            }
         }
 
         async function fetchUserData(email) {
@@ -258,6 +266,10 @@
             const email = document.getElementById('loginEmail').value.trim();
             if (!email) {
                 document.getElementById('error').textContent = 'Please enter your email address.';
+                return;
+            }
+            if (!gapi.client.sheets) {
+                document.getElementById('error').textContent = 'Google Sheets API is not initialized. Please try again later.';
                 return;
             }
             try {
