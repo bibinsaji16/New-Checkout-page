@@ -5,7 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Nebula Nexus Checkout</title>
     <script src="https://apis.google.com/js/api.js"></script>
-    <script src="https://accounts.google.com/gsi/client"></script>
     <style>
         :root {
             --primary-color: #107C10;
@@ -156,10 +155,10 @@
 <body>
     <div class="card" id="authPage">
         <h1>Nebula Nexus Checkout</h1>
-        <p>Please authenticate to proceed:</p>
+        <p>Please enter your email to proceed:</p>
         <input type="email" id="loginEmail" placeholder="Enter your email" required>
-        <button id="authorizeButton" onclick="handleAuthClick()">Authorize</button>
-        <button id="signoutButton" onclick="handleSignoutClick()">Sign Out</button>
+        <button id="submitEmail" onclick="handleEmailSubmit()">Proceed to Checkout</button>
+        <p id="error" class="error"></p>
     </div>
 
     <div class="card hidden" id="checkoutPage">
@@ -197,9 +196,6 @@
         const SHEET_ID = '1bBTyAlZM47BESezOnPSbk3UcvK2SawuuTZewrTzAOZw';
         const RANGE = 'A:I';
 
-        let tokenClient;
-        let gapiInited = false;
-        let gisInited = false;
 
         let userData = null;
         let selectedPlan = null;
@@ -218,150 +214,68 @@
             { name: 'NCP Purchase', price: 20, description: 'x 1', allowMultiple: true },
         ];
 
-        document.getElementById('authorizeButton').style.visibility = 'hidden';
-        document.getElementById('signoutButton').style.visibility = 'hidden';
 
         function gapiLoaded() {
-            gapi.load('client', initializeGapiClient);
-        }
-
-        async function initializeGapiClient() {
-            await gapi.client.init({
-                apiKey: API_KEY,
-                discoveryDocs: DISCOVERY_DOCS,
+            gapi.load('client', async () => {
+                await gapi.client.init({
+                    apiKey: API_KEY,
+                    discoveryDocs: [DISCOVERY_DOCS],
+                });
+                console.log('GAPI client initialized');
             });
-            gapiInited = true;
-            maybeEnableButtons();
         }
 
-        function gisLoaded() {
-            tokenClient = google.accounts.oauth2.initTokenClient({
-                client_id: CLIENT_ID,
-                scope: SCOPES,
-                callback: '', // defined later
-            });
-            gisInited = true;
-            maybeEnableButtons();
-        }
-
-        function maybeEnableButtons() {
-            if (gapiInited && gisInited) {
-                document.getElementById('authorizeButton').style.visibility = 'visible';
-            }
-        }
-
-        function handleAuthClick() {
-            const email = document.getElementById('loginEmail').value.trim();
-            if (!email) {
-                alert('Please enter your email address.');
-                return;
-            }
-            tokenClient.callback = async (resp) => {
-                if (resp.error !== undefined) {
-                    throw (resp);
-                }
-                document.getElementById('signoutButton').style.visibility = 'visible';
-                document.getElementById('authorizeButton').innerText = 'Refresh';
-                await listMajors(email);
-            };
-
-            if (gapi.client.getToken() === null) {
-                tokenClient.requestAccessToken({prompt: 'consent'});
-            } else {
-                tokenClient.requestAccessToken({prompt: ''});
-            }
-        }
-
-        function handleSignoutClick() {
-            const token = gapi.client.getToken();
-            if (token !== null) {
-                google.accounts.oauth2.revoke(token.access_token);
-                gapi.client.setToken('');
-                document.getElementById('content').innerText = '';
-                document.getElementById('authorizeButton').innerText = 'Authorize';
-                document.getElementById('signoutButton').style.visibility = 'hidden';
-            }
-        }
-
-        async function listMajors(email) {
-            let response;
+        async function fetchUserData(email) {
             try {
-                response = await gapi.client.sheets.spreadsheets.values.get({
+                const response = await gapi.client.sheets.spreadsheets.values.get({
                     spreadsheetId: SHEET_ID,
                     range: RANGE,
                 });
-            } catch (err) {
-                document.getElementById('content').innerText = err.message;
-                return;
-            }
-            const range = response.result;
-            if (!range || !range.values || range.values.length == 0) {
-                document.getElementById('content').innerText = 'No values found.';
-                return;
-            }
-            // Check if the email exists in the sheet
-            const userRow = range.values.find(row => row[0] === email);
-            if (userRow) {
-                userData = {
-                    email: userRow[0],
-                    gamingHours: userRow[2],
-                    connectedDevices: userRow[3],
-                    currentPlan: userRow[4],
-                    expiryDate: userRow[6],
-                    addOns: userRow[7],
-                    value: userRow[8],
-                };
-                document.getElementById('authPage').classList.add('hidden');
-                document.getElementById('checkoutPage').classList.remove('hidden');
-                displayCheckoutPage();
-            } else {
-                alert('Email not found. Please try again.');
-            }
-        }
-
-
-        async function updateUserData(data) {
-            try {
-                console.log('Attempting to update user data:', data);
-                const response = await gapi.client.sheets.spreadsheets.values.get({
-                    spreadsheetId: SHEET_ID,
-                    range: 'A:A',
-                });
 
                 const rows = response.result.values;
-                const rowIndex = rows.findIndex(row => row[0] === data.email);
-
-                if (rowIndex === -1) {
-                    throw new Error('User not found');
+                if (rows && rows.length) {
+                    const userRow = rows.find(row => row[0] === email);
+                    if (userRow) {
+                        return {
+                            email: userRow[0],
+                            gamingHours: userRow[2],
+                            connectedDevices: userRow[3],
+                            currentPlan: userRow[4],
+                            expiryDate: userRow[6],
+                            addOns: userRow[7],
+                            value: userRow[8],
+                        };
+                    }
                 }
-
-                console.log('Updating row:', rowIndex + 1);
-                const updateResponse = await gapi.client.sheets.spreadsheets.values.update({
-                    spreadsheetId: SHEET_ID,
-                    range: `C${rowIndex + 1}:I${rowIndex + 1}`,
-                    valueInputOption: 'USER_ENTERED',
-                    resource: {
-                        values: [[
-                            data.gamingHours,
-                            data.connectedDevices,
-                            data.plan,
-                            '',
-                            data.expiryDate,
-                            JSON.stringify(data.addOns),
-                            data.totalValue
-                        ]],
-                    },
-                });
-                console.log('Update response:', updateResponse);
-                return true;
+                return null;
             } catch (error) {
-                console.error('Error updating user data:', error);
-                console.error('Error details:', error.result ? error.result.error : 'No detailed error information');
+                console.error('Error fetching user data:', error);
                 throw error;
             }
         }
 
-        function displayCheckoutPage() {
+        async function handleEmailSubmit() {
+            const email = document.getElementById('loginEmail').value.trim();
+            if (!email) {
+                document.getElementById('error').textContent = 'Please enter your email address.';
+                return;
+            }
+            try {
+                const userData = await fetchUserData(email);
+                if (userData) {
+                    document.getElementById('authPage').classList.add('hidden');
+                    document.getElementById('checkoutPage').classList.remove('hidden');
+                    displayCheckoutPage(userData);
+                } else {
+                    document.getElementById('error').textContent = 'Email not found. Please try again.';
+                }
+            } catch (error) {
+                console.error('Error fetching user data:', error);
+                document.getElementById('error').textContent = 'An error occurred. Please try again.';
+            }
+        }
+
+        function displayCheckoutPage(userData) {
             document.getElementById('userInfo').innerHTML = `
                 <p><strong>Email:</strong> ${userData.email}</p>
                 <p><strong>Current Plan:</strong> ${userData.currentPlan}</p>
@@ -470,7 +384,7 @@
 
             try {
                 console.log('Checkout data:', checkoutData);
-                await updateUserData(checkoutData);
+                //  No update needed here as there is no longer any backend update
                 document.getElementById('checkoutPage').classList.add('hidden');
                 document.getElementById('thankYouPage').classList.remove('hidden');
                 displayThankYouPage(checkoutData);
@@ -493,6 +407,5 @@
         }
     </script>
     <script async defer src="https://apis.google.com/js/api.js" onload="gapiLoaded()"></script>
-    <script async defer src="https://accounts.google.com/gsi/client" onload="gisLoaded()"></script>
 </body>
 </html>
